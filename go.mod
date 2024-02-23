@@ -4,7 +4,7 @@ go 1.21.1
 
 require (
 	github.com/appleboy/gin-jwt/v2 v2.9.2
-	github.com/ccb1900/gocommon v0.1.2
+	github.com/ccb1900/gocommon v0.1.3-0.20240223110759-db09dc132906
 	github.com/gin-contrib/cors v1.5.0
 	github.com/gin-gonic/gin v1.9.1
 	github.com/redis/go-redis/v9 v9.5.1
