@@ -19,7 +19,14 @@ type App struct {
 }
 
 func New() *App {
-	return &App{}
+	return &App{
+		AuthRoutes: func(gn *gin.Engine) {
+			logger.Default().Warn("auth routes not set")
+		},
+		Routes: func(gn *gin.Engine) {
+			logger.Default().Warn("routes not set")
+		},
+	}
 }
 
 type login struct {
@@ -34,7 +41,10 @@ type User struct {
 }
 
 func (app *App) Run() error {
-	gin.SetMode(gin.ReleaseMode)
+	if !config.Default().GetBool("debug") {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	gn := gin.New()
 	gn.Use(gin.Logger())
 	gn.Use(gin.Recovery())
