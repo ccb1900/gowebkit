@@ -9,6 +9,7 @@ import (
 	"github.com/ccb1900/gocommon/config"
 	"github.com/ccb1900/gocommon/logger"
 	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/requestid"
 	"github.com/gin-gonic/gin"
 )
 
@@ -37,7 +38,8 @@ func (app *App) Run() error {
 	gn := gin.New()
 	gn.Use(gin.Logger())
 	gn.Use(gin.Recovery())
-	gn.Use(cors.New(cors.DefaultConfig()))
+	gn.Use(cors.Default())
+	gn.Use(requestid.New())
 	identityKey := config.Default().GetString("jwt.secret")
 	authMiddleware, err := jwt.New(&jwt.GinJWTMiddleware{
 		Realm:       "test zone",
