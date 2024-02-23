@@ -1,0 +1,8 @@
+db:
+  default: default
+  clients:
+   mysql:
+    dsn: user:pass@tcp(127.0.0.1:3306)/dbname?charset=utf8mb4&parseTime=True&loc=Local
+    max_idle: 10
+    max_open: 100
+    max_lifetime: 1

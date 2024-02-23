@@ -1,0 +1,8 @@
+redis:
+  default: default
+  clients:
+   default:
+    host: 127.0.0.1:6379,127.0.0.1:6379,127.0.0.1:6379
+    password: ""
+    pool_size: 10
+    min_idle: 10
