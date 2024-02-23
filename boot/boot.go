@@ -1,8 +1,8 @@
 package boot
 
 import (
-	"gowebkit/db"
-	"gowebkit/redisx"
+	"github.com/ccb1900/gowebkit/db"
+	"github.com/ccb1900/gowebkit/redisx"
 
 	commonboot "github.com/ccb1900/gocommon/boot"
 )

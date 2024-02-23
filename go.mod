@@ -1,4 +1,4 @@
-module gowebkit
+module github.com/ccb1900/gowebkit
 
 go 1.21.1
 
