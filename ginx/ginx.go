@@ -1,31 +1,52 @@
 package ginx
 
 import (
+	"embed"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"mime"
+	"net/http"
+	"path"
+	"path/filepath"
 	"time"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/ccb1900/gocommon/config"
 	"github.com/ccb1900/gocommon/logger"
+	"github.com/ccb1900/gocommon/ulidx"
+	"github.com/ccb1900/gowebkit"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/requestid"
 	"github.com/gin-gonic/gin"
 )
 
 type App struct {
-	AuthRoutes func(*gin.Engine)
-	Routes     func(*gin.Engine)
+	AuthRoutes        func(*gin.RouterGroup)
+	Routes            func(*gin.Engine)
+	AuthJwtMiddleware func(*gin.Engine, *jwt.GinJWTMiddleware)
+	assets            embed.FS
+	ui                bool
+	port              int
+	name              string
 }
 
-func New() *App {
+var Auth *jwt.GinJWTMiddleware
+
+func New(name string, port int) *App {
 	return &App{
-		AuthRoutes: func(gn *gin.Engine) {
+		port: port,
+		name: name,
+		AuthRoutes: func(gn *gin.RouterGroup) {
 			logger.Default().Warn("auth routes not set")
 		},
 		Routes: func(gn *gin.Engine) {
 			logger.Default().Warn("routes not set")
 		},
+		// AuthJwtMiddleware: func(e *gin.Engine, jwt *jwt.GinJWTMiddleware) {
+		// 	logger.Default().Warn("auth jwt middleware not set")
+		// },
 	}
 }
 
@@ -40,6 +61,42 @@ type User struct {
 	LastName  string
 }
 
+type IUser interface {
+	UserName() string
+	Id() string
+}
+
+var ErrDir = errors.New("path is dir")
+
+func (a *App) SetUI(assets embed.FS) {
+	a.assets = assets
+	a.ui = true
+}
+
+func (a *App) tryRead(fs embed.FS, prefix, requestedPath string, w http.ResponseWriter) error {
+	f, err := fs.Open(path.Join(prefix, requestedPath))
+	if err != nil {
+		logger.Default().Info("try read", "path", path.Join(prefix, requestedPath), "err", err)
+		return err
+	}
+	defer f.Close()
+
+	stat, _ := f.Stat()
+	if stat.IsDir() {
+		return ErrDir
+	}
+
+	contentType := mime.TypeByExtension(filepath.Ext(requestedPath))
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", contentType)
+
+	_, err = io.Copy(w, f)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (app *App) Run() error {
 	if !config.Default().GetBool("debug") {
 		gin.SetMode(gin.ReleaseMode)
@@ -50,27 +107,31 @@ func (app *App) Run() error {
 	gn.Use(gin.Recovery())
 	gn.Use(cors.Default())
 	gn.Use(requestid.New())
-	identityKey := config.Default().GetString("jwt.secret")
-	authMiddleware, err := jwt.New(&jwt.GinJWTMiddleware{
-		Realm:       "test zone",
-		Key:         []byte("secret key"),
-		Timeout:     time.Hour,
-		MaxRefresh:  time.Hour,
+	secret := config.Default().GetString("jwt.secret")
+	identityKey := "id"
+	var err error
+	Auth, err = jwt.New(&jwt.GinJWTMiddleware{
+		Realm:       "dftc",
+		Key:         []byte(secret),
+		Timeout:     14 * 24 * time.Hour,
+		MaxRefresh:  0,
 		IdentityKey: identityKey,
 		PayloadFunc: func(data interface{}) jwt.MapClaims {
-			if v, ok := data.(*User); ok {
+			fmt.Println("payload", data)
+			if v, ok := data.(IUser); ok {
+				fmt.Println("payload2", data)
 				return jwt.MapClaims{
-					identityKey: v.UserName,
+					identityKey: v.Id(),
 				}
 			}
 			return jwt.MapClaims{}
 		},
-		IdentityHandler: func(c *gin.Context) interface{} {
-			claims := jwt.ExtractClaims(c)
-			return &User{
-				UserName: claims[identityKey].(string),
-			}
-		},
+		// IdentityHandler: func(c *gin.Context) interface{} {
+		// 	claims := jwt.ExtractClaims(c)
+		// 	return &User{
+		// 		UserName: claims[identityKey].(string),
+		// 	}
+		// },
 		Authenticator: func(c *gin.Context) (interface{}, error) {
 			var loginVals login
 			if err := c.ShouldBind(&loginVals); err != nil {
@@ -90,11 +151,12 @@ func (app *App) Run() error {
 			return nil, jwt.ErrFailedAuthentication
 		},
 		Authorizator: func(data interface{}, c *gin.Context) bool {
-			if v, ok := data.(*User); ok && v.UserName == "admin" {
-				return true
-			}
+			// if v, ok := data.(*User); ok && v.UserName == "admin" {
+			// 	return true
+			// }
 
-			return false
+			// return false
+			return true
 		},
 		Unauthorized: func(c *gin.Context, code int, message string) {
 			c.JSON(code, gin.H{
@@ -110,7 +172,7 @@ func (app *App) Run() error {
 		// - "query:<name>"
 		// - "cookie:<name>"
 		// - "param:<name>"
-		TokenLookup: "header: Authorization, query: token, cookie: jwt",
+		TokenLookup: "header: Authorization",
 		// TokenLookup: "query:token",
 		// TokenLookup: "cookie:token",
 
@@ -124,13 +186,91 @@ func (app *App) Run() error {
 		log.Fatal("JWT Error:" + err.Error())
 	}
 
-	app.Routes(gn)
-	gn.Use(authMiddleware.MiddlewareFunc())
-	{
-		app.AuthRoutes(gn)
-	}
+	gn.POST("/login", Auth.LoginHandler)
 
-	if err := gn.Run(fmt.Sprintf("%s:%d", config.Default().GetString("host"), config.Default().GetInt("port"))); err != nil {
+	gn.POST("upload/single/local", func(ctx *gin.Context) {
+		file, err := ctx.FormFile("file")
+		if err != nil {
+			logger.Default().Error("upload file error", "err", err)
+			ctx.JSON(400, gowebkit.ResultError("参数错误"))
+			return
+		}
+
+		fileName := fmt.Sprintf("%s%s", ulidx.Get(), path.Ext(file.Filename))
+		pathName := fmt.Sprintf("%s/%s", config.Default().GetString("upload.path"), fileName)
+		if err := ctx.SaveUploadedFile(file, pathName); err != nil {
+			logger.Default().Error("save file error", "err", err)
+			ctx.JSON(400, gowebkit.ResultError("参数错误"))
+			return
+		}
+
+		ctx.JSON(http.StatusOK, gowebkit.ResultOkData(fileName))
+	})
+	gn.POST("upload/many/local", func(ctx *gin.Context) {
+		form, err := ctx.MultipartForm()
+		if err != nil {
+			logger.Default().Error("upload file error", "err", err)
+			ctx.JSON(400, gowebkit.ResultError("参数错误"))
+			return
+		}
+		files := form.File["files[]"]
+
+		var results []string
+
+		for _, file := range files {
+			// Upload the file to specific dst.
+			fileName := fmt.Sprintf("%s%s", ulidx.Get(), path.Ext(file.Filename))
+			pathName := fmt.Sprintf("%s/%s", config.Default().GetString("upload.path"), fileName)
+			if err := ctx.SaveUploadedFile(file, pathName); err != nil {
+				logger.Default().Error("save file error", "err", err)
+				ctx.JSON(400, gowebkit.ResultError("参数错误"))
+				return
+			}
+
+			results = append(results, fileName)
+		}
+		ctx.JSON(http.StatusOK, gowebkit.ResultOkData(results))
+	})
+
+	app.Routes(gn)
+	if app.AuthJwtMiddleware != nil {
+		app.AuthJwtMiddleware(gn, Auth)
+		authorized := gn.Group("/")
+		authorized.Use(Auth.MiddlewareFunc())
+		{
+			app.AuthRoutes(authorized)
+		}
+	} else {
+		logger.Default().Warn("auth jwt middleware not set")
+	}
+	gn.NoMethod(func(ctx *gin.Context) {
+		ctx.JSON(405, gin.H{
+			"code":    405,
+			"message": "method not supported",
+		})
+	})
+	gn.NoRoute(func(ctx *gin.Context) {
+		log.Println("404")
+		if !app.ui {
+			ctx.JSON(404, gin.H{
+				"code":    404,
+				"message": "not found",
+			})
+			return
+		}
+		if err := app.tryRead(app.assets, "fronted", ctx.Request.URL.Path, ctx.Writer); err == nil {
+			return
+		} else {
+			logger.Default().Info("加载失败", "path", ctx.Request.URL.Path, "err", err)
+		}
+
+		if err := app.tryRead(app.assets, "fronted", "index.html", ctx.Writer); err != nil {
+			return
+		}
+	})
+
+	log.Println("boot server", "name", app.name, "port", app.port)
+	if err := gn.Run(fmt.Sprintf("%s:%d", config.Default().GetString("host"), app.port)); err != nil {
 		logger.Default().Error("boot server fail", "err", err)
 		return err
 	}

@@ -13,3 +13,7 @@ func ResultOk() Result {
 func ResultOkData(data interface{}) Result {
 	return Result{Code: 0, Msg: "ok", Data: data}
 }
+
+func ResultError(msg string) Result {
+	return Result{Code: -1, Msg: msg}
+}
