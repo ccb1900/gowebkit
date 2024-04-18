@@ -7,6 +7,7 @@ import (
 	"github.com/ccb1900/gocommon/config"
 	"github.com/ccb1900/gocommon/logger"
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -23,12 +24,18 @@ type DbConfig struct {
 	Default string                    `json:"default"`
 }
 
-var once sync.Once
-
-var clientMap map[string]*gorm.DB
+var (
+	once      sync.Once
+	lock      sync.RWMutex
+	clientMap map[string]*gorm.DB
+)
 
 func Default() *gorm.DB {
-	return clientMap[config.Default().GetString("db.default")]
+	return Get(config.Default().GetString("db.default"))
+}
+
+func Get(name string) *gorm.DB {
+	return clientMap[name]
 }
 
 func Init() {
@@ -42,12 +49,16 @@ func Init() {
 			var err error
 			var sqlDB *gorm.DB
 			clientMap = make(map[string]*gorm.DB)
+
+			logger.Json(dbConfigDic.Clients)
+
 			for name, client := range dbConfigDic.Clients {
 				switch client.Type {
 				case "mysql":
 					sqlDB, err = gorm.Open(mysql.Open(client.Dsn), &gorm.Config{})
 				case "postgres":
 				case "sqlite":
+					sqlDB, err = gorm.Open(sqlite.Open(client.Dsn), &gorm.Config{})
 				case "sqlserver":
 				default:
 					logger.Default().Error("db type not support", "name", name, "type", client.Type)
