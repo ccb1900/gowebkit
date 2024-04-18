@@ -1,6 +1,7 @@
 package ginx
 
 import (
+	"context"
 	"embed"
 	"errors"
 	"fmt"
@@ -97,7 +98,7 @@ func (a *App) tryRead(fs embed.FS, prefix, requestedPath string, w http.Response
 	return nil
 }
 
-func (app *App) Run() error {
+func (app *App) Run(ctx context.Context) error {
 	if !config.Default().GetBool("debug") {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -186,8 +187,6 @@ func (app *App) Run() error {
 		log.Fatal("JWT Error:" + err.Error())
 	}
 
-	gn.POST("/login", Auth.LoginHandler)
-
 	gn.POST("upload/single/local", func(ctx *gin.Context) {
 		file, err := ctx.FormFile("file")
 		if err != nil {
@@ -235,6 +234,7 @@ func (app *App) Run() error {
 	app.Routes(gn)
 	if app.AuthJwtMiddleware != nil {
 		app.AuthJwtMiddleware(gn, Auth)
+		gn.POST("/login", Auth.LoginHandler)
 		authorized := gn.Group("/")
 		authorized.Use(Auth.MiddlewareFunc())
 		{
@@ -258,19 +258,31 @@ func (app *App) Run() error {
 			})
 			return
 		}
-		if err := app.tryRead(app.assets, "fronted", ctx.Request.URL.Path, ctx.Writer); err == nil {
+		if err := app.tryRead(app.assets, "fronted/"+app.name, ctx.Request.URL.Path, ctx.Writer); err == nil {
 			return
 		} else {
 			logger.Default().Info("加载失败", "path", ctx.Request.URL.Path, "err", err)
 		}
 
-		if err := app.tryRead(app.assets, "fronted", "index.html", ctx.Writer); err != nil {
+		if err := app.tryRead(app.assets, "fronted/"+app.name, "index.html", ctx.Writer); err != nil {
 			return
 		}
 	})
 
+	s := http.Server{
+		Addr:    fmt.Sprintf("%s:%d", config.Default().GetString("host"), app.port),
+		Handler: gn,
+	}
+	go func(ctx context.Context) {
+		defer log.Println("boot server exit", "name", app.name)
+		<-ctx.Done()
+		if err := s.Shutdown(ctx); err != nil {
+			logger.Default().Error("boot server shutdown fail", "err", err)
+		}
+	}(ctx)
+
 	log.Println("boot server", "name", app.name, "port", app.port)
-	if err := gn.Run(fmt.Sprintf("%s:%d", config.Default().GetString("host"), app.port)); err != nil {
+	if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Default().Error("boot server fail", "err", err)
 		return err
 	}

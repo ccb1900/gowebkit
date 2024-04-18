@@ -74,6 +74,9 @@ func Init() {
 						db.SetMaxIdleConns(client.MaxIdle)
 						db.SetMaxOpenConns(client.MaxOpen)
 						db.SetConnMaxLifetime(time.Duration(client.MaxLifetime) * time.Hour)
+						if config.Default().GetBool("debug") {
+							sqlDB = sqlDB.Debug()
+						}
 						clientMap[name] = sqlDB
 					}
 				}
