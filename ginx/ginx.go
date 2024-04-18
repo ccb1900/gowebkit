@@ -29,6 +29,7 @@ type App struct {
 	AuthJwtMiddleware func(*gin.Engine, *jwt.GinJWTMiddleware)
 	assets            embed.FS
 	ui                bool
+	uipath            string
 	port              int
 	name              string
 }
@@ -69,8 +70,9 @@ type IUser interface {
 
 var ErrDir = errors.New("path is dir")
 
-func (a *App) SetUI(assets embed.FS) {
+func (a *App) SetUI(assets embed.FS, path string) {
 	a.assets = assets
+	a.uipath = path
 	a.ui = true
 }
 
@@ -187,37 +189,15 @@ func (app *App) Run(ctx context.Context) error {
 		log.Fatal("JWT Error:" + err.Error())
 	}
 
-	gn.POST("upload/single/local", func(ctx *gin.Context) {
-		file, err := ctx.FormFile("file")
-		if err != nil {
-			logger.Default().Error("upload file error", "err", err)
-			ctx.JSON(400, gowebkit.ResultError("参数错误"))
-			return
-		}
+	if config.Default().GetBool("upload.enable") {
+		gn.POST("upload/single/local", func(ctx *gin.Context) {
+			file, err := ctx.FormFile("file")
+			if err != nil {
+				logger.Default().Error("upload file error", "err", err)
+				ctx.JSON(400, gowebkit.ResultError("参数错误"))
+				return
+			}
 
-		fileName := fmt.Sprintf("%s%s", ulidx.Get(), path.Ext(file.Filename))
-		pathName := fmt.Sprintf("%s/%s", config.Default().GetString("upload.path"), fileName)
-		if err := ctx.SaveUploadedFile(file, pathName); err != nil {
-			logger.Default().Error("save file error", "err", err)
-			ctx.JSON(400, gowebkit.ResultError("参数错误"))
-			return
-		}
-
-		ctx.JSON(http.StatusOK, gowebkit.ResultOkData(fileName))
-	})
-	gn.POST("upload/many/local", func(ctx *gin.Context) {
-		form, err := ctx.MultipartForm()
-		if err != nil {
-			logger.Default().Error("upload file error", "err", err)
-			ctx.JSON(400, gowebkit.ResultError("参数错误"))
-			return
-		}
-		files := form.File["files[]"]
-
-		var results []string
-
-		for _, file := range files {
-			// Upload the file to specific dst.
 			fileName := fmt.Sprintf("%s%s", ulidx.Get(), path.Ext(file.Filename))
 			pathName := fmt.Sprintf("%s/%s", config.Default().GetString("upload.path"), fileName)
 			if err := ctx.SaveUploadedFile(file, pathName); err != nil {
@@ -226,10 +206,34 @@ func (app *App) Run(ctx context.Context) error {
 				return
 			}
 
-			results = append(results, fileName)
-		}
-		ctx.JSON(http.StatusOK, gowebkit.ResultOkData(results))
-	})
+			ctx.JSON(http.StatusOK, gowebkit.ResultOkData(fileName))
+		})
+		gn.POST("upload/many/local", func(ctx *gin.Context) {
+			form, err := ctx.MultipartForm()
+			if err != nil {
+				logger.Default().Error("upload file error", "err", err)
+				ctx.JSON(400, gowebkit.ResultError("参数错误"))
+				return
+			}
+			files := form.File["files[]"]
+
+			var results []string
+
+			for _, file := range files {
+				// Upload the file to specific dst.
+				fileName := fmt.Sprintf("%s%s", ulidx.Get(), path.Ext(file.Filename))
+				pathName := fmt.Sprintf("%s/%s", config.Default().GetString("upload.path"), fileName)
+				if err := ctx.SaveUploadedFile(file, pathName); err != nil {
+					logger.Default().Error("save file error", "err", err)
+					ctx.JSON(400, gowebkit.ResultError("参数错误"))
+					return
+				}
+
+				results = append(results, fileName)
+			}
+			ctx.JSON(http.StatusOK, gowebkit.ResultOkData(results))
+		})
+	}
 
 	app.Routes(gn)
 	if app.AuthJwtMiddleware != nil {
@@ -258,13 +262,13 @@ func (app *App) Run(ctx context.Context) error {
 			})
 			return
 		}
-		if err := app.tryRead(app.assets, "fronted/"+app.name, ctx.Request.URL.Path, ctx.Writer); err == nil {
+		if err := app.tryRead(app.assets, app.uipath, ctx.Request.URL.Path, ctx.Writer); err == nil {
 			return
 		} else {
 			logger.Default().Info("加载失败", "path", ctx.Request.URL.Path, "err", err)
 		}
 
-		if err := app.tryRead(app.assets, "fronted/"+app.name, "index.html", ctx.Writer); err != nil {
+		if err := app.tryRead(app.assets, app.uipath, "index.html", ctx.Writer); err != nil {
 			return
 		}
 	})
